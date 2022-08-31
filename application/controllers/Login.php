@@ -2,10 +2,26 @@
 
 class Login extends CI_Controller {
 
+	public $post_data;
+
 	public function  __construct()
 	{
 		parent::__construct();
 		$this->load->model("user");
+		$this->load->database();
+
+		$data_raw = $this->security->xss_clean($this->input->raw_input_stream);
+		$data =explode('&', $data_raw);
+		//todo
+		foreach ($data_raw as $str){
+			explode('&', $data_raw);
+		}
+		if(isset($data_raw) && $data_raw){
+			var_dump($data_raw);
+			$this->post_data = json_decode($data_raw, true);
+
+		}
+
 	}
 
 	public function view_user(){
@@ -13,17 +29,48 @@ class Login extends CI_Controller {
 	}
 
 	public function signup_user(){
-		//todo:插入前判断用户是否存在
+		$data=$this->post_data;
 
-		$insert_user_id = $this->user->insert_user('kakukaku', 'nasanasa');
-		if($insert_user_id === 0){
-
-		}else{
-			//user_info 插入 user_id username firstname=1 ln =2
-			//todo 判断插入是否成功 失败回滚数据库（开启事务）
+		var_dump($data);
+		return;
+		if((!isset($data['password']))&&(!isset($data['firstname']))&&(!isset($data['lastname']))&&(!isset($data['username']))){
+			$this->_handle_response('failed','not fill all inputs');
+			return ;
 		}
-		//user_id
-	$this->_handle_response('ok','insert success',['user_id'=>100]);
+		$username = $this->validateEmail($data['username']??'');
+		if(!$username){
+			$this->_handle_response('failed','user name should be email');
+			return ;
+		}
+		$is_user_exist=$this->user->is_user_exist($username);
+		if($is_user_exist){
+			$this->_handle_response('failed','user has already exist');
+			return;
+		}
+
+		$this->db->trans_start();
+		$insert_user_id = $this->user->insert_user($username, $this->post_data['password']);
+		if($insert_user_id === 0){
+			$this->db->trans_rollback();
+			$this->_handle_response('failed','insert failed');
+			return;
+		}
+//		$is_user_info_exist=$this->user->is_user_info_exist($username);
+//		if($is_user_info_exist){
+//			$this->_handle_response('failed','user info has already exist');
+//			return;
+//		}
+		$insert_user_info = $this->user->insert_user_info($username, $insert_user_id,$this->post_data['firstname'],$this->post_data['lastname']);
+		if($insert_user_info === 0){
+			$this->db->trans_rollback();
+			$this->_handle_response('failed','insert info failed');
+			return;
+		}
+		if($this->db->trans_complete()){
+			$this->_handle_response('ok','insert success');
+		}else{
+			$this->_handle_response('failed','commit failed');
+		};
 	}
 
 	public function login_hp(){
@@ -31,12 +78,12 @@ class Login extends CI_Controller {
 	}
 
 	public function login_input_data(){
-		$username = $this->validateEmail($_POST['username']??'');
+		$username = $this->validateEmail($this->post_data['username']??'');
 		if(!$username){
 			$this->_handle_response('failed','user name un legal');
 			return ;
 		}
-		if(!isset($_POST['password'])){
+		if(!isset($this->post_data['password'])){
 			$this->_handle_response('failed','password un legal');
 			return ;
 		}
@@ -46,7 +93,7 @@ class Login extends CI_Controller {
 			$this->_handle_response( 'failed','user not exist');
 			return;
 		}
-		if($data['password']!=$_POST['password'])
+		if($data['password']!=$this->post_data['password'])
 		{
 			$this->_handle_response( 'failed','password wrong');
 			return;
@@ -60,13 +107,13 @@ class Login extends CI_Controller {
 	public function change_password()
 	{
 
-		$username = $this->validateEmail($_POST['username']??'');
+		$username = $this->validateEmail($this->post_data['username']??'');
 		if(!$username){
 			$this->_handle_response('failed','user name un legal');
 			return ;
 		}
 
-		if(!isset($_POST['old_password']) || !isset($_POST['new_password'])){
+		if(!isset($this->post_data['old_password']) || !isset($this->post_data['new_password'])){
 			$this->_handle_response('failed','password un legal');
 			return ;
 		}
@@ -79,12 +126,12 @@ class Login extends CI_Controller {
 			return;
 		}
 
-		if ($data['password'] !== $_POST['old_password']){
+		if ($data['password'] !== $this->post_data['old_password']){
 			$this->_handle_response( 'failed','password wrong');
 			return;
 		}
 
-		$remsg = $this->user->update_password($username,$_POST['new_password']);
+		$remsg = $this->user->update_password($username,$this->post_data['new_password']);
 		if(!$remsg){
 			$this->_handle_response( 'failed','changed failed');
 			return;
@@ -96,7 +143,7 @@ class Login extends CI_Controller {
 
 	public function delete_user()
 	{
-		$username = $this->validateEmail($_POST['username']??'');
+		$username = $this->validateEmail($this->post_data['username']??'');
 		if(!$username){
 			$this->_handle_response('failed','user name un legal');
 			return ;
@@ -108,19 +155,32 @@ class Login extends CI_Controller {
 			return;
 		}
 
-		$remsg = $this->user->delete_user($username);
-		if(!$remsg){
+		$this->db->trans_start();
+		$del_user = $this->user->delete_user($username);
+		if((!$del_user)){
 			$this->_handle_response( 'failed','delete user failed');
 			return;
 		}
-		$this->_handle_response( 'ok','delete user success');
+		$del_user_info = $this->user->delete_user_info($username);
+//		$del_user_info=TRUE;
 
+		if(!$del_user_info){
+			$this->db->trans_rollback();
+			$this->_handle_response( 'failed','delete user failed');
+			return;
+		}
+
+		if($this->db->trans_complete()){
+			$this->_handle_response( 'ok','delete user success');
+		}else{
+			$this->_handle_response( 'failed','commit failed');
+		}
 
 	}
 
 	public function search_user_info()
 	{
-		$username = $this->validateEmail($_POST['username']??'');
+		$username = $this->validateEmail($this->post_data['username']??'');
 		if(!$username){
 			$this->_handle_response('failed','user name un legal');
 			return ;
@@ -148,6 +208,7 @@ class Login extends CI_Controller {
 	{
 		return filter_var($email, FILTER_VALIDATE_EMAIL);
 	}
+
 
 
 }
